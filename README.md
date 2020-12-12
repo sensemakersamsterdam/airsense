@@ -1,2 +1,4 @@
-# airsense
-Repository for the 2021 air sensor project.  Contact Edwin for more info.
+# Airsense
+
+Repository for Airsense, code and stuff to measure air quality in the city and at home. 
+Code in arduinos C++ and in micropython. The wiki gives information and links abouts sensors and air quality projects.
