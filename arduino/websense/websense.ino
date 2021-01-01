@@ -24,7 +24,7 @@ Datastream streams[nstreams];
  */
 float pm10,pm25;
 int isample = 0;
-const int nsamples = 50;
+const int nsamples = 10;
 float pm25TS[nsamples];
 float pm10TS[nsamples];
 String timeTS[nsamples];
@@ -97,53 +97,19 @@ void setup() {
     message += tableRow("PM10 ", (String)pm10);
     message += tableRow("time",   printDateTime(epoch));
     message += "</table>";
+
+    message += "<p>Measurements over a period of "+(String) (nsamples*sampleinterval)+" minutes.\n";
+    message += "One measurement every "+(String) sampleinterval+" minutes";
+    message += ", PM25 is green, PM10 is blue.</p>\n";
+    message += "<p><center>\n";
+    message += graph(nsamples);
+    message += "</center>";
+    
     message += "</body></html>";
     server.send(200, "text/html", message);
     Serial.println("Request for / handled");
   });
 
-  /** 
-   * Sensorthings stuff
-   */
-  server.on("/sensorthings/v1.0" , []() {
-    String message = "{ \"value\": [";
-    message += "  {\"name\": \"Things\", \"url\": \""+server.uri()+"/sensorthings/v1.0/Things\" },";
-    message += "  {\"name\": \"Datastreams\", \"url\": \""+server.uri()+"/sensorthings/v1.0/Datastreams\" },";
-    message += "  {\"name\": \"Observations\", \"url\": \""+server.uri()+"/sensorthings/v1.0/Observations\" },";
-    message += "  {\"name\": \"FeaturesOfInterest\", \"url\": \""+server.uri()+"/sensorthings/v1.0/FeaturesOfInterest\" }";
-    message += "] }";
-    server.send(200, "application/json", message );
-  });
-  server.on("/sensorthings/v1.0/Things", []() {
-    String ID = server.arg("ID");
-    /** if (ID == "on") doeiets; **/
-    String message = "{ \"value\": [";
-    for (int i=0;i<nthings;i++) {
-       if (i>0) {message += ", ";}
-       message += "{ \"name\": \""+things[i].name+"\", \"description\": \""+things[i].description+"\" }";
-    }
-    message += "] }";
-    server.send(200, "application/json", message );
-  });
-  /**
-   * Send out *all* observations in memory
-   */
-  server.on("/sensorthings/v1.0/Observations", []() {
-    String message = "{ \"value\": [";
-    for (int i=0;i<nsamples;i++) {
-       int is = ( i + isample) % nsamples;
-       if (i>0) {message += ", ";}
-       message += "{ \"@iot.id\": \"pm25s"+(String)(is)+"\", \"result\": \""+(String)pm25TS[is]+
-                    "\", \"phenomenonTime\": \""+timeTS[is]+
-                    "\", \"unitOfMeasurement\": \"ppm\"}, ";
-       message += "{ \"@iot.id\": \"pm10s"+(String)(is)+"\", \"result\": \""+(String)pm10TS[is]+
-                    "\", \"phenomenonTime\": \""+timeTS[is]+
-                    "\", \"unitOfMeasurement\": \"ppm\"}";
-    }
-    message += "] }";
-    server.send(200, "application/json", message );
-  });
-  
   // Start the server
   server.begin();
   Serial.println("Server started");
@@ -203,13 +169,13 @@ void loop() {
  */
 String styleHeader() {
   String out = "<style>";
-  out += " body {background-color: #ffffff; font-family: sans-serif; font-size: 24pt;}";
-  out += " table {width: 80%; margin-left:auto; margin-right:auto; font-size: 24pt;}";
+  out += " body {background-color: #ffffff; font-family: sans-serif; font-size: 16pt;}";
+  out += " table {width: 80%; margin-left:auto; margin-right:auto; font-size: 16pt;}";
   out += " th, td {border-bottom: 1px solid #ddd;}";
   out += " tr:nth-child(odd) {background-color: #f2f2f2}";
-  out += " .buttonOn    {background-color: #4CAF50; border-radius: 10%; font-size: 24pt;}";
-  out += " .buttonMaybe {background-color: #008CBA; border-radius: 10%; font-size: 24pt;}";
-  out += " .buttonOff   {background-color: #f44336; border-radius: 10%; font-size: 24pt;}";
+  out += " .buttonOn    {background-color: #4CAF50; border-radius: 10%; font-size: 16pt;}";
+  out += " .buttonMaybe {background-color: #008CBA; border-radius: 10%; font-size: 16pt;}";
+  out += " .buttonOff   {background-color: #f44336; border-radius: 10%; font-size: 16pt;}";
   out += "</style>";
   out += "<meta http-equiv=\"refresh\" content=\"60; url=/\">";
   return out;
@@ -241,6 +207,49 @@ String tableRow(String t, String v) {
   out += "</td><td>";
   out += v;
   out += "</td></tr>";
+  return out;
+}
+
+/**
+ * Returns a graph of the measurements in SVG
+ * First get minimum and maximum of all time series
+ * The measurement arrays are filled and refilled with the 
+ * latest value at isample-1, the oldest is thus at isample.
+ * So we start plotting from isample to isample-1 mod nsamples.
+ */
+String graph(int ns) {
+  int width=600;
+  int height=400;
+  float pm25Min= 50.0; float pm25Max=    0.0;
+  float pm10Min= 50.0; float pm10Max=    0.0;
+  for (int i=0;i<nsamples;i++) {
+      pm25Min = min(pm25TS[i],pm25Min);
+      pm25Max = max(pm25TS[i],pm25Max);
+      pm10Min = min(pm10TS[i],pm10Min);
+      pm10Max = max(pm10TS[i],pm10Max);
+  }
+  String out = "<svg height=\""+(String) height+"\" width=\""+(String) width+"\">\n";
+  out += "<polyline style=\"fill:none;stroke:green;stroke-width:3\" points=\"";
+  for (int i=0;i<nsamples;i++) {
+    int is = (i+isample) % nsamples;
+    float x=width*i/nsamples;
+    float y=height*(1.0-(pm25TS[is]-pm25Min)/(pm25Max-pm25Min));
+    out += (String) x+","+(String) y+" ";
+  }
+  out += "\"/>\n";
+  out += "<text x=\"0.0\" y=\"20.0\" text-anchor=\"start\" fill=\"green\">" + (String) pm25Max + "</text>\n";
+  out += "<text x=\"0.0\" y=\"" + (String) height + "\" text-anchor=\"start\" fill=\"green\">" + (String) pm25Min + "</text>\n";
+  out += "<polyline style=\"fill:none;stroke:blue;stroke-width:3\" points=\"";
+  for (int i=0;i<nsamples;i++) {
+    int is = (i+isample) % nsamples;
+    float x=width*i/nsamples;
+    float y=height*(1.0-(pm10TS[is]-pm10Min)/(pm10Max-pm10Min));
+    out += (String) x+","+(String) y+" ";
+  }
+  out += "\"/>\n";
+  out += "<text x=\""+ (String) (width-100.0)+"\" y=\"20.0\" text-anchor=\"start\" fill=\"blue\">"+ (String) pm10Max +"</text>\n";
+  out += "<text x=\""+ (String) (width-100.0)+"\" y=\""+ (String) height+"\" text-anchor=\"start\" fill=\"blue\">" + (String) pm10Min + "</text>\n";
+  out += "</svg>";
   return out;
 }
 
