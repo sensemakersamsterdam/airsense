@@ -1,23 +1,24 @@
-/****************************************
- * Wemos webserver met een stofsensor
+/******************************************************************
+ * Wemos webserver showing fine particle sensor measurements
+ * 
+ * Uses a Nova SDS011 dust particle sensor to measure PM10 and PM25
+ * Uses a DHT22 humidity sensor to flag outliers
+ * Sensors are read every n minutes, on the webpage of the device
+ * it shows a table with the latest measurements and a graph for
+ * the last couple of hours, depending on measurement cycle and
+ * length of the time series.
+ * 
  */
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
+#include "DHT.h"
 #include "SdsDustSensor.h"
 #include "websense.h"
 
 #define SDS_PIN_RX D6
 #define SDS_PIN_TX D7
-
-/**
- * Sensor definitions for klik sensorthings
- */
-const int nthings = 1;
-Thing things[nthings];
-
-const int nstreams = 5;
-Datastream streams[nstreams];
+#define DHT_PIN    D8
 
 /*********************************
  * Time series arrays
@@ -27,10 +28,12 @@ int isample = 0;
 const int nsamples = 10;
 float pm25TS[nsamples];
 float pm10TS[nsamples];
+float tempTS[nsamples];
+float humiTS[nsamples];
 String timeTS[nsamples];
 
 const int waitfor = 1000;
-const int sampleinterval = 1; // sample every 5 minutes
+const int sampleinterval = 5; // sample every 5 minutes
 String webString = "";
 
 const char* ssid = "********";
@@ -39,6 +42,8 @@ const char* sitename = "stof";
 
 ESP8266WebServer server(80);
 SdsDustSensor sds(SDS_PIN_RX, SDS_PIN_TX);
+DHT dht(DHT_PIN, DHT22, 24); // the last parameter is some weird delay number needed because the wemos is too fast for the temperature sensor
+
 
 /*****************************************************************
  * To get time from an NTP server
@@ -61,8 +66,11 @@ WiFiUDP udp;
 void setup() {
   Serial.begin(9600);
   Serial.println("Start Setup");
+
+  // Begin sensors
   sds.begin();
   sds.setCustomWorkingPeriod(sampleinterval);
+  dht.begin();
   
   // Connect to WiFi network
   Serial.print("Connecting to ");
@@ -148,6 +156,10 @@ void loop() {
     Serial.print(pm25);
     Serial.print(", PM10 = ");
     Serial.print(pm10);
+    // Get temperature and humidity
+    float temperature = dht.readTemperature();
+    delay(100);
+    float humidity = dht.readHumidity();
     // Get the current time
     epoch  = getTime();
     Serial.print(", time = ");
@@ -155,6 +167,8 @@ void loop() {
     // store the current values into the array
     pm25TS[isample] = pm25;
     pm10TS[isample] = pm10;
+    tempTS[isample] = temperature;
+    humiTS[isample] = humidity;
     timeTS[isample] = printDateTime(epoch);
     isample++;
     if (isample==nsamples) {isample=0;};

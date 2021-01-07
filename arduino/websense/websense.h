@@ -13,28 +13,3 @@ struct DateTime {
   int config;
   int doy;    // not BCD!
 };
-
-/**
- * Sensorthings stuff
- */
-struct Thing {
-  String name;
-  String description;
-};
-
-struct UnitofMeasurement {
-  String name;
-  String symbol;
-  String uri;
-};
-
-struct Datastream{
-  String name;
-  String description;
-  String observationtype;
-  UnitofMeasurement unit;
-};
-
-struct Observation {
-  float result;
-};
