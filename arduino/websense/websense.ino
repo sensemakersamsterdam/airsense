@@ -10,6 +10,7 @@
  * 
  */
 #include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
 #include <WiFiUdp.h>
 #include "DHT.h"
@@ -23,7 +24,7 @@
 /*********************************
  * Time series arrays
  */
-float pm10,pm25;
+float pm10,pm25, temperature, humidity;
 int isample = 0;
 const int nsamples = 10;
 float pm25TS[nsamples];
@@ -41,6 +42,7 @@ const char* password = "********";
 const char* sitename = "stof";
 
 ESP8266WebServer server(80);
+HTTPClient webclient;
 SdsDustSensor sds(SDS_PIN_RX, SDS_PIN_TX);
 DHT dht(DHT_PIN, DHT22, 24); // the last parameter is some weird delay number needed because the wemos is too fast for the temperature sensor
 
@@ -67,6 +69,8 @@ void setup() {
   Serial.begin(9600);
   Serial.println("Start Setup");
 
+  // TODO: Get configuration from config.txt on SD
+  
   // Begin sensors
   sds.begin();
   sds.setCustomWorkingPeriod(sampleinterval);
@@ -103,6 +107,8 @@ void setup() {
     message += tableHead("parameter", "value");
     message += tableRow("PM25 ", (String)pm25);
     message += tableRow("PM10 ", (String)pm10);
+    message += tableRow("Temperature ", (String)temperature);
+    message += tableRow("Humidity ", (String)humidity);
     message += tableRow("time",   printDateTime(epoch));
     message += "</table>";
 
@@ -125,6 +131,8 @@ void setup() {
   udp.begin(localPort);
   // Serial.println(udp.localPort());
   boolean gottime = getTimeNTP();
+
+  // TODO: Get location from geocoder if it was not in the config.txt file
 
   pinMode(LED_BUILTIN, OUTPUT);
 }
@@ -157,9 +165,9 @@ void loop() {
     Serial.print(", PM10 = ");
     Serial.print(pm10);
     // Get temperature and humidity
-    float temperature = dht.readTemperature();
+    temperature = dht.readTemperature();
     delay(100);
-    float humidity = dht.readHumidity();
+    humidity = dht.readHumidity();
     // Get the current time
     epoch  = getTime();
     Serial.print(", time = ");
@@ -170,12 +178,43 @@ void loop() {
     tempTS[isample] = temperature;
     humiTS[isample] = humidity;
     timeTS[isample] = printDateTime(epoch);
+    // TODO: Send out the measurement values to a web service
+    sendMeasurement(isample);
     isample++;
     if (isample==nsamples) {isample=0;};
   } else {
     Serial.print(".");
     // Serial.println("Error getting dust values");
   }
+}
+
+/*****************************************************************************************************
+ * Send out json with measurement, location and time. Example:
+ * {"app_id": "airsense", "dev_id": "8341PZ3","payload_fields": 
+ *   {"pm10": 10.0, pm25: 15.0, temperature: 10.0, humidity: 44, latitude:52.1234 , longitude: 4.1234},
+ *  "time": 1557244616000}
+ */
+void sendMeasurement(int is) {
+  webclient.begin("http://test.mosquitto.org/");
+  webclient.addHeader("Content-Type", "application/json");
+  String out = "{\"app_id\": \"airsense\", ";
+  out += "\"dev_id\": \"8341PZ3\",\"payload_fields\": ";
+  out += "{\"pm10\": \"";
+  out += (String)pm10TS[is];
+  out += "\", \"pm25\": \"";
+  out += (String)pm25TS[is];
+  out += "\", \"temp\": \"";
+  out += (String)tempTS[is];
+  out += "\", \"humi\": \"";
+  out += (String)humiTS[is];
+  out += "}, \"time\": ";
+  out += (String) epoch;
+  out += "}";
+  int httpCode = webclient.POST(out);
+  String payload = webclient.getString();
+  Serial.println(httpCode);
+  Serial.println(payload);
+  webclient.end();
 }
 
 /*****************************************************************
@@ -285,7 +324,6 @@ unsigned long getTime() {
     sincecheck = now - timechecked;
   }
   newepoch = epoch0 + sincecheck / 1000;
-  // Serial.println(printDateTime(newepoch));
   return newepoch;
 }
 
