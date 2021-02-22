@@ -12,6 +12,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
+#include <PubSubClient.h>
 #include <WiFiUdp.h>
 #include "DHT.h"
 #include "SdsDustSensor.h"
@@ -21,8 +22,9 @@
 #define SDS_PIN_TX D7
 #define DHT_PIN    D8
 
-/*********************************
+/****************************************
  * Time series arrays
+ * Latitude, longitude hard coded for now
  */
 float pm10,pm25, temperature, humidity;
 int isample = 0;
@@ -37,12 +39,10 @@ const int waitfor = 1000;
 const int sampleinterval = 5; // sample every 5 minutes
 String webString = "";
 
-const char* ssid = "********";
-const char* password = "********";
-const char* sitename = "stof";
-
 ESP8266WebServer server(80);
-HTTPClient webclient;
+WiFiClient webClient;
+PubSubClient client(webClient);
+
 SdsDustSensor sds(SDS_PIN_RX, SDS_PIN_TX);
 DHT dht(DHT_PIN, DHT22, 24); // the last parameter is some weird delay number needed because the wemos is too fast for the temperature sensor
 
@@ -127,6 +127,8 @@ void setup() {
   // Start the server
   server.begin();
   Serial.println("Server started");
+  // MQTT
+  client.setServer(mqtt_server, 1883); 
 
   udp.begin(localPort);
   // Serial.println(udp.localPort());
@@ -166,8 +168,10 @@ void loop() {
     Serial.print(pm10);
     // Get temperature and humidity
     temperature = dht.readTemperature();
+    if(isnan(temperature)) {temperature = NULL;}
     delay(100);
     humidity = dht.readHumidity();
+    if (isnan(humidity)) { humidity=NULL;}
     // Get the current time
     epoch  = getTime();
     Serial.print(", time = ");
@@ -184,7 +188,6 @@ void loop() {
     if (isample==nsamples) {isample=0;};
   } else {
     Serial.print(".");
-    // Serial.println("Error getting dust values");
   }
 }
 
@@ -195,26 +198,27 @@ void loop() {
  *  "time": 1557244616000}
  */
 void sendMeasurement(int is) {
-  webclient.begin("http://test.mosquitto.org/");
-  webclient.addHeader("Content-Type", "application/json");
-  String out = "{\"app_id\": \"airsense\", ";
-  out += "\"dev_id\": \"8341PZ3\",\"payload_fields\": ";
-  out += "{\"pm10\": \"";
-  out += (String)pm10TS[is];
-  out += "\", \"pm25\": \"";
-  out += (String)pm25TS[is];
-  out += "\", \"temp\": \"";
-  out += (String)tempTS[is];
-  out += "\", \"humi\": \"";
-  out += (String)humiTS[is];
-  out += "}, \"time\": ";
-  out += (String) epoch;
-  out += "}";
-  int httpCode = webclient.POST(out);
-  String payload = webclient.getString();
-  Serial.println(httpCode);
-  Serial.println(payload);
-  webclient.end();
+  /**
+   * Send out to sensemakers over MQTT
+   */
+  while (!client.connected()) {
+    if (client.connect(device_id, "", "")) { 
+      char out[256], topic[80];
+      sprintf(out,"{\"app_id\": \"%s\", \"dev_id\": \"%s\", \"payload_fields\":{\"pm10\": %.2f, \"pm25\": %.2f, \"temperature\": %.2f, \"humidity\": %.2f, \"latitude\": %.4f, \"longitude\": %.4f}, \"time\":%d}", 
+              app_id,device_id,pm10TS[is], pm25TS[is], tempTS[is], humiTS[is], latitude, longitude, epoch);        
+      // sprintf(out,"{\"payload_fields\":{\"pm10\": %.2f, \"pm25\": %.2f, \"temperature\": %.2f, \"humidity\": %.2f, \"latitude\": %.4f, \"longitude\": %.4f}}", 
+      //         pm10TS[is], pm25TS[is], tempTS[is], humiTS[is], latitude, longitude);
+      sprintf(topic,"pipeline/%s/%s",app_id,device_id);
+      Serial.println(topic);
+      Serial.println(out);
+      client.publish(topic, out);
+    }
+  }
+  client.disconnect();
+  
+  /**
+   * Send out a sensorthings measurement object
+   */
 }
 
 /*****************************************************************
@@ -233,7 +237,6 @@ String styleHeader() {
   out += "<meta http-equiv=\"refresh\" content=\"60; url=/\">";
   return out;
 }
-
 
 /*****************************************************************
  * Print the table header
@@ -263,7 +266,7 @@ String tableRow(String t, String v) {
   return out;
 }
 
-/**
+/**************************************************************
  * Returns a graph of the measurements in SVG
  * First get minimum and maximum of all time series
  * The measurement arrays are filled and refilled with the 
@@ -437,24 +440,20 @@ int timetosec(String d) {
 }
 String printTime(unsigned long e) {
   DateTime t = epoch2datetime(e);
-  // String out = (String)t.hour + ":" + (String)t.min + ":" + (String)t.sec;
   char buff[8];
   sprintf(buff,"%02d:%02d:%02d",t.hour,t.min,t.sec);
   String out = String(buff);
   return out;
-}                                                  //
+}
 String printDate(unsigned long e) {
   DateTime t = epoch2datetime(e);
-  // String out = (String)t.day + "-" + (String)t.month + "-" + (String)t.year;
   char buff[10];
   sprintf(buff,"%02d-%02d-%04d",t.day,t.month,t.year);
   String out = String(buff);
   return out;
-}                                                //
+}
 String printDateTime(unsigned long e) {
   DateTime t = epoch2datetime(e);
-  // String out = (String)t.day + "-" + (String)t.month + "-" + (String)t.year + " ";
-  // out += (String)t.hour + ":" + (String)t.min + ":" + (String)t.sec + " UTC";
   char buff[24];
   sprintf(buff,"%04d-%02d-%02dT%02d:%02d:%02dZ",t.year,t.month,t.day,t.hour,t.min,t.sec);
   String out = String(buff);
